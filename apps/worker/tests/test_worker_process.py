@@ -7,6 +7,16 @@ import sys
 import pytest
 
 
+# The graceful-stop semantics under test are POSIX-only: select() on pipes raises
+# OSError on Windows, send_signal(SIGTERM) is a TerminateProcess hard kill there,
+# and CTRL_C_EVENT would reach the whole console process group. CI keeps coverage.
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "POSIX signal lifecycle: select() on pipes and graceful SIGTERM "
+        "cannot be exercised on Windows."
+    ),
+)
 @pytest.mark.parametrize("stop_signal", [signal.SIGINT, signal.SIGTERM])
 def test_worker_starts_without_services_and_stops_cleanly(stop_signal: int) -> None:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}

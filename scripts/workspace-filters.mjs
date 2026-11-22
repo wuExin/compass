@@ -1,13 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { pnpmInvocation } from "./pnpm-invocation.mjs";
 
 // pnpm owns workspace discovery, including custom globs and excluded directories.
 export function workspacePackages(root) {
-  const result = spawnSync("pnpm", ["--recursive", "list", "--depth", "-1", "--json"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 15000,
-  });
+  const pnpm = pnpmInvocation();
+  const result = spawnSync(
+    pnpm.command,
+    [...pnpm.prefixArgs, "--recursive", "list", "--depth", "-1", "--json"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+    },
+  );
   if (result.status !== 0)
     throw new Error(
       "Cannot discover workspace packages; run pnpm install and check pnpm-workspace.yaml.",

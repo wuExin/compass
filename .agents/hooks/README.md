@@ -18,7 +18,7 @@
 ## 执行边界
 
 - 读取 Hook 的 JSON 标准输入，只处理该编辑事件给出的文件。Claude 使用 `tool_input.file_path`；Codex 从 `tool_input.command` 解析补丁新增、修改和移动后的路径。删除、目录、软链接及 Compass 外部路径跳过。
-- 前端、配置、文档使用 `node_modules/prettier/bin/prettier.cjs --write --ignore-unknown`；Python / stub / notebook 使用 `.venv/bin/ruff format --force-exclude`。只运行已安装的项目工具，不下载依赖。
+- 前端、配置、文档使用 `node_modules/prettier/bin/prettier.cjs --write --ignore-unknown`；Python / stub / notebook 使用 `.venv` 中的 Ruff（`format --force-exclude`；Windows 位于 `.venv/Scripts/ruff.exe`）。只运行已安装的项目工具，不下载依赖。
 - 沿用[编码规范](../../docs/coding-style.md)、`.prettierrc.json`、`.prettierignore`、EditorConfig 和 Ruff 配置。排除目录、生成契约、分发素材保持原有规则；不支持的文件类型跳过。`.agents/` 本身沿用现有格式排除，维护 Hook 时需使用下方显式检查。
 - 成功时无输出；缺少依赖、语法错误、格式化失败或单个格式化进程超过 20 秒时，以退出码 `2` 和具体错误反馈给 Agent。混合语言补丁会尝试两个格式化器，再汇总错误；编辑本身已经完成，Hook 不回滚编辑。
 - 同步执行，下一次编辑前完成格式化。只调整排版，导入排序和 lint 修复仍按仓库命令执行。

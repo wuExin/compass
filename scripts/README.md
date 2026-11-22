@@ -15,7 +15,7 @@
 
 部署入口使用 `smoke --local --apps <逗号分隔的应用名>`，固定 loopback 地址且不加载根 `.env`；按所选应用检查 home 页面/素材、Web 登录门禁、Agent seed 或 Memory 就绪。Worker 由部署脚本检查容器运行状态。
 
-开发环境为 macOS / Linux；Windows 使用 WSL2。脚本入口以根 package.json 为准。契约生成登记为不缓存的根 `//#contracts` 任务，由 Web 的 build / typecheck 显式依赖；单独执行 `pnpm contracts` 也可更新生成文件。
+开发环境为 macOS / Linux / Windows（原生）；Windows 的 `pnpm run deploy` 容器部署使用 WSL2。脚本入口以根 package.json 为准。契约生成登记为不缓存的根 `//#contracts` 任务，由 Web 的 build / typecheck 显式依赖；单独执行 `pnpm contracts` 也可更新生成文件。
 
 - `data-seed.mjs`：`pnpm data:seed` 的无缓存运行入口，加载根 `.env` 后调用 `tools/data-seed` 的独立 `compass-data-seed` Python 包。只使用显式 `COMPASS_RETAIL_*` 凭据；业务包生成不需要数据库连接。详见 [操作说明](../docs/data-seeding.md)。
 

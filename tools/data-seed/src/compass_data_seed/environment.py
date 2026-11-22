@@ -1,8 +1,8 @@
 "Serialized candidate import and atomic manifest publication; old releases stay intact."
 
-import fcntl
 import json
 import os
+import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +14,29 @@ from .access import deploy_access, verify_access
 from .contracts import validate_manifest
 from .importer import connection_info, load_package, read_config
 from .validation import validate_database
+
+if sys.platform == "win32":
+    # msvcrt byte-range locks provide the same non-blocking exclusivity as flock.
+    import msvcrt
+
+    def _lock_exclusive(file):
+        file.seek(0)
+        try:
+            msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            raise BlockingIOError from error
+
+    def _unlock(file):
+        file.seek(0)
+        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(file):
+        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(file):
+        fcntl.flock(file, fcntl.LOCK_UN)
 
 
 def atomic_json(path, value):
@@ -38,13 +61,13 @@ def environment_lock(state: Path):
     state.mkdir(parents=True, mode=0o700, exist_ok=True)
     with (state / "operation.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_exclusive(lock)
         except BlockingIOError as error:
             raise ValueError("Environment operation conflict") from error
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            _unlock(lock)
 
 
 def bind_state(config, state):

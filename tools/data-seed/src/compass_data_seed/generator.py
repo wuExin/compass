@@ -2,10 +2,14 @@
 
 import hashlib
 import json
-import resource
 import shutil
 import sys
 import time
+
+if sys.platform == "win32":
+    resource = None  # POSIX-only; Windows reports peak RSS as unavailable.
+else:
+    import resource
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -143,8 +147,12 @@ def generate(profile_name: str, output: Path, release_id: str, *, seed=None, cat
             actual_started_at=actual_started,
             actual_finished_at=datetime.now(UTC).isoformat(),
             elapsed_seconds=round(time.monotonic() - started, 3),
-            peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            * (1 if sys.platform == "darwin" else 1024),
+            peak_rss_bytes=(
+                resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                * (1 if sys.platform == "darwin" else 1024)
+                if resource
+                else None
+            ),
             row_counts=dict(sorted(sink.counts.items())),
             bytes=sum(p.stat().st_size for p in output.rglob("*") if p.is_file()),
         )

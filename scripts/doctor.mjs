@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { pnpmInvocation } from "./pnpm-invocation.mjs";
 const checks = [
   ["node", ["--version"]],
   ["pnpm", ["--version"]],
@@ -9,7 +10,16 @@ const checks = [
 ];
 let failed = false;
 for (const [cmd, args] of checks) {
-  const result = spawnSync(cmd, args, { encoding: "utf8", timeout: 15000 });
+  let result;
+  try {
+    const pnpm = cmd === "pnpm" ? pnpmInvocation() : { command: cmd, prefixArgs: [] };
+    result = spawnSync(pnpm.command, [...pnpm.prefixArgs, ...args], {
+      encoding: "utf8",
+      timeout: 15000,
+    });
+  } catch {
+    result = { status: 1 };
+  }
   const ok = result.status === 0;
   console.log(
     `${ok ? "OK" : "FAIL"} ${cmd} ${args.join(" ")}: ${ok ? result.stdout.trim() : "unavailable"}`,

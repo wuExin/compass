@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pnpmInvocation } from "./pnpm-invocation.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = mkdtempSync(path.join(tmpdir(), "compass-contracts-"));
@@ -20,7 +21,9 @@ try {
     "scripts/export-contracts.py",
     temp,
   ]);
-  run("pnpm", [
+  const pnpm = pnpmInvocation();
+  run(pnpm.command, [
+    ...pnpm.prefixArgs,
     "exec",
     "openapi-typescript",
     path.join(temp, "openapi.json"),

@@ -11,6 +11,8 @@ for name, schema in [
     ("openapi.json", app.openapi()),
     ("demo-overview.schema.json", DemoOverview.model_json_schema()),
 ]:
+    # Force LF so generated contracts stay byte-identical across Windows and POSIX.
     (output / name).write_text(
-        json.dumps(schema, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        json.dumps(schema, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        newline="\n",
     )

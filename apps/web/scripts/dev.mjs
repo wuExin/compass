@@ -21,25 +21,45 @@ function lsof(args) {
     throw error;
   }
 }
-const pids = new Set(
-  lsof(["-t", `-iTCP:${port}`, "-sTCP:LISTEN"])
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(Number),
-);
-// Next also locks its output directory, even when the old instance uses another port.
-for (const line of execFileSync("ps", ["-axo", "pid=,comm="], { encoding: "utf8" }).split("\n")) {
-  const match = line.trim().match(/^(\d+)\s+.*next-server/);
-  if (!match) continue;
-  const pid = Number(match[1]);
-  if (
-    lsof(["-a", "-p", String(pid), "-d", "cwd", "-Fn"])
-      .split("\n")
-      .includes(`n${directory}`)
-  )
-    pids.add(pid);
+function occupiedPids(port) {
+  if (process.platform !== "win32") {
+    const pids = new Set(
+      lsof(["-t", `-iTCP:${port}`, "-sTCP:LISTEN"])
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(Number),
+    );
+    // Next also locks its output directory, even when the old instance uses another port.
+    for (const line of execFileSync("ps", ["-axo", "pid=,comm="], { encoding: "utf8" }).split(
+      "\n",
+    )) {
+      const match = line.trim().match(/^(\d+)\s+.*next-server/);
+      if (!match) continue;
+      const pid = Number(match[1]);
+      if (
+        lsof(["-a", "-p", String(pid), "-d", "cwd", "-Fn"])
+          .split("\n")
+          .includes(`n${directory}`)
+      )
+        pids.add(pid);
+    }
+    return pids;
+  }
+  // netstat ships with Windows and reports listening PIDs without privileges;
+  // the status word stays LISTENING regardless of the system language.
+  const output = execFileSync("netstat", ["-ano", "-p", "tcp"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const pids = new Set();
+  for (const line of output.split("\n")) {
+    const match = line.trim().match(/^TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i);
+    if (match && Number(match[1]) === Number(port)) pids.add(Number(match[2]));
+  }
+  return pids;
 }
+const pids = occupiedPids(port);
 function alive(pid) {
   try {
     process.kill(pid, 0);

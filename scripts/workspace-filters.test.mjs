@@ -146,7 +146,12 @@ test("every current app follows the short-name launch convention", () => {
       JSON.parse(readFileSync(path.join(pkg.path, "package.json"), "utf8")).scripts?.dev,
       `${pkg.name}: dev script is required`,
     );
-    const result = spawnSync("pnpm", ["dev", "-F", name, "--dry-run=json"], {
+    // Windows cannot spawn the pnpm .cmd shim without a shell; go through the JS entry.
+    const pnpm =
+      process.platform === "win32"
+        ? { command: process.execPath, prefix: [process.env.npm_execpath] }
+        : { command: "pnpm", prefix: [] };
+    const result = spawnSync(pnpm.command, [...pnpm.prefix, "dev", "-F", name, "--dry-run=json"], {
       cwd: root,
       encoding: "utf8",
     });

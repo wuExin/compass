@@ -10,7 +10,7 @@
     ".node-version",
     "scripts/**"
   ],
-  "globalEnv": ["CI_TOOLCHAIN_ID"],
+  "globalEnv": ["CI_TOOLCHAIN_ID", "PYTHONUTF8"],
   "tasks": {
     "//#contracts": {
       "cache": false,

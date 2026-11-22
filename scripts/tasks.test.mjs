@@ -8,38 +8,51 @@ import test from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// The pnpm fixture needs two shapes: a POSIX shebang shim (bin/pnpm, executed via PATH)
+// and a plain ES module (bin/pnpm.mjs, handed to tasks.mjs via npm_execpath on Windows).
+// The module extension matters: fixture bodies may use top-level await, which .cjs forbids.
+function writePnpmFixture(dir, body) {
+  writeFileSync(path.join(dir, "bin/pnpm"), `#!/usr/bin/env node\n${body}`, { mode: 0o755 });
+  writeFileSync(path.join(dir, "bin/pnpm.mjs"), body);
+}
+
 function fixture(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "compass-tasks-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, "scripts"));
-  mkdirSync(path.join(dir, "node_modules/.bin"), { recursive: true });
   mkdirSync(path.join(dir, "bin"));
   copyFileSync(path.join(root, "scripts/tasks.mjs"), path.join(dir, "scripts/tasks.mjs"));
   copyFileSync(
     path.join(root, "scripts/workspace-filters.mjs"),
     path.join(dir, "scripts/workspace-filters.mjs"),
   );
-  symlinkSync(process.execPath, path.join(dir, "bin/node"));
+  copyFileSync(
+    path.join(root, "scripts/pnpm-invocation.mjs"),
+    path.join(dir, "scripts/pnpm-invocation.mjs"),
+  );
+  if (process.platform !== "win32") symlinkSync(process.execPath, path.join(dir, "bin/node"));
   writeFileSync(path.join(dir, ".env"), "COMPASS_TASK_TEST_SECRET=local-only\n");
-  writeFileSync(path.join(dir, "bin/pnpm"), "#!/usr/bin/env node\nconsole.log('11.3.0');\n", {
-    mode: 0o755,
-  });
-  writeFileSync(
-    path.join(dir, "node_modules/.bin/turbo"),
-    `#!/usr/bin/env node
+  writePnpmFixture(dir, "console.log('11.3.0');");
+  const turboScript = `#!/usr/bin/env node
 console.log(JSON.stringify({
   args: process.argv.slice(2),
   secret: process.env.COMPASS_TASK_TEST_SECRET,
   nodeToolchain: process.env.CI_TOOLCHAIN_ID,
   pythonToolchain: process.env.PYTHON_TOOLCHAIN_ID
 }));
-`,
-    { mode: 0o755 },
-  );
+`;
+  if (process.platform === "win32") {
+    mkdirSync(path.join(dir, "node_modules/turbo/bin"), { recursive: true });
+    writeFileSync(path.join(dir, "node_modules/turbo/bin/turbo"), turboScript);
+  } else {
+    mkdirSync(path.join(dir, "node_modules/.bin"), { recursive: true });
+    writeFileSync(path.join(dir, "node_modules/.bin/turbo"), turboScript, { mode: 0o755 });
+  }
   return {
     dir,
     run(...args) {
       const env = { ...process.env, PATH: path.join(dir, "bin") };
+      if (process.platform === "win32") env.npm_execpath = path.join(dir, "bin", "pnpm.mjs");
       for (const key of ["COMPASS_TASK_TEST_SECRET", "CI_TOOLCHAIN_ID", "PYTHON_TOOLCHAIN_ID"])
         delete env[key];
       const result = spawnSync(process.execPath, ["scripts/tasks.mjs", ...args], {
@@ -75,19 +88,32 @@ test("build without uv or a virtualenv stays environment-free and reaches Turbo"
 
 test("cached tasks fingerprint the installed Python toolchain separately", (t) => {
   const { dir, run } = fixture(t);
-  mkdirSync(path.join(dir, ".venv/bin"), { recursive: true });
-  writeFileSync(
-    path.join(dir, "bin/uv"),
-    "#!/usr/bin/env node\nconsole.log('uv test-version');\n",
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    path.join(dir, ".venv/bin/python"),
-    "#!/usr/bin/env node\nconsole.log('Python test-version');\n",
-    { mode: 0o755 },
-  );
+  if (process.platform === "win32") {
+    // Windows cannot execute shebang scripts; node copies double as the version probes.
+    mkdirSync(path.join(dir, ".venv/Scripts"), { recursive: true });
+    copyFileSync(process.execPath, path.join(dir, "bin/uv.exe"));
+    copyFileSync(process.execPath, path.join(dir, ".venv/Scripts/python.exe"));
+  } else {
+    mkdirSync(path.join(dir, ".venv/bin"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "bin/uv"),
+      "#!/usr/bin/env node\nconsole.log('uv test-version');\n",
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(dir, ".venv/bin/python"),
+      "#!/usr/bin/env node\nconsole.log('Python test-version');\n",
+      { mode: 0o755 },
+    );
+  }
   const result = run("test", "-F", "@compass/agent");
-  assert.equal(result.pythonToolchain, "uv test-version|Python test-version");
+  if (process.platform === "win32") {
+    const [uvVersion, pythonVersion] = result.pythonToolchain.split("|");
+    assert.ok(uvVersion.includes(process.version));
+    assert.ok(pythonVersion.includes(process.version));
+  } else {
+    assert.equal(result.pythonToolchain, "uv test-version|Python test-version");
+  }
   assert.ok(!result.nodeToolchain.includes("Python"));
   assert.equal(result.secret, undefined);
 });
@@ -149,16 +175,14 @@ test("one-shot interactive tasks forward stdin without logging secrets or losing
     path.join(dir, "turbo.json"),
     JSON.stringify({ tasks: { "db:manage": { cache: false, interactive: true } } }),
   );
-  writeFileSync(
-    path.join(dir, "bin/pnpm"),
-    `#!/usr/bin/env node
-if (process.argv.includes('--recursive')) console.log(JSON.stringify([{name:'@probe/maintenance',path:${JSON.stringify(app)}}]));
+  writePnpmFixture(
+    dir,
+    `if (process.argv.includes('--recursive')) console.log(JSON.stringify([{name:'@probe/maintenance',path:${JSON.stringify(app)}}]));
 else {
  let input=''; for await (const chunk of process.stdin) input+=chunk;
  console.log(JSON.stringify({args:process.argv.slice(2),bytes:Buffer.byteLength(input),secret:process.env.COMPASS_TASK_TEST_SECRET}));
 }
 `,
-    { mode: 0o755 },
   );
   const input = "synthetic-pipe-input\n";
   const result = spawnSync(
@@ -172,12 +196,83 @@ else {
       "create-user",
       "--password-stdin",
     ],
-    { cwd: dir, env: { ...process.env, PATH: path.join(dir, "bin") }, input, encoding: "utf8" },
+    {
+      cwd: dir,
+      env: {
+        ...process.env,
+        PATH: path.join(dir, "bin"),
+        ...(process.platform === "win32"
+          ? { npm_execpath: path.join(dir, "bin", "pnpm.mjs") }
+          : {}),
+      },
+      input,
+      encoding: "utf8",
+    },
   );
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!result.stdout.includes(input.trim()));
   assert.deepEqual(JSON.parse(result.stdout), {
     args: ["--filter", "@probe/maintenance", "run", "db:manage", "create-user", "--password-stdin"],
+    bytes: Buffer.byteLength(input),
+    secret: "local-only",
+  });
+});
+
+test("interactive tasks recover the filter and task arguments when pnpm strips the -- separator", (t) => {
+  const { dir } = fixture(t);
+  const app = path.join(dir, "apps/maintenance");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(dir, "turbo.json"),
+    JSON.stringify({ tasks: { "db:manage": { cache: false, interactive: true } } }),
+  );
+  writePnpmFixture(
+    dir,
+    `if (process.argv.includes('--recursive')) console.log(JSON.stringify([{name:'@probe/maintenance',path:${JSON.stringify(app)}}]));
+else {
+ let input=''; for await (const chunk of process.stdin) input+=chunk;
+ console.log(JSON.stringify({args:process.argv.slice(2),bytes:Buffer.byteLength(input),secret:process.env.COMPASS_TASK_TEST_SECRET}));
+}
+`,
+  );
+  const input = "synthetic-pipe-input\n";
+  const result = spawnSync(
+    process.execPath,
+    [
+      "scripts/tasks.mjs",
+      "db:manage",
+      "-F",
+      "maintenance",
+      "create-user",
+      "--login-name",
+      "probe",
+      "--password-stdin",
+    ],
+    {
+      cwd: dir,
+      env: {
+        ...process.env,
+        PATH: path.join(dir, "bin"),
+        ...(process.platform === "win32"
+          ? { npm_execpath: path.join(dir, "bin", "pnpm.mjs") }
+          : {}),
+      },
+      input,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    args: [
+      "--filter",
+      "@probe/maintenance",
+      "run",
+      "db:manage",
+      "create-user",
+      "--login-name",
+      "probe",
+      "--password-stdin",
+    ],
     bytes: Buffer.byteLength(input),
     secret: "local-only",
   });

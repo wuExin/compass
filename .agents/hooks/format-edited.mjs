@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,12 +60,22 @@ function insideRoot(file) {
 function regularFile(file, cwd) {
   const absolute = path.resolve(cwd, file);
   if (!insideRoot(absolute)) return undefined;
-  try {
-    // Skip symlinks (including symlinked directories), directories and deleted files.
-    if (realpathSync(absolute) !== absolute || !statSync(absolute).isFile()) return undefined;
-  } catch (error) {
-    if (["ENOENT", "ENOTDIR"].includes(error.code)) return undefined;
-    throw error;
+  // Skip symlinks (including symlinked directories), directories and deleted files.
+  // Walk every component so a symlinked parent is caught too; comparing realpaths
+  // would misjudge case-only differences (e.g. drive letters) on Windows file systems.
+  let current = root;
+  const parts = path.relative(root, absolute).split(path.sep);
+  for (let i = 0; i < parts.length; i++) {
+    current = path.join(current, parts[i]);
+    let info;
+    try {
+      info = lstatSync(current);
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR"].includes(error.code)) return undefined;
+      throw error;
+    }
+    if (info.isSymbolicLink()) return undefined;
+    if (i === parts.length - 1 ? !info.isFile() : !info.isDirectory()) return undefined;
   }
   return absolute;
 }
@@ -112,7 +122,11 @@ function main() {
     [
       python,
       () => {
-        const cli = path.join(root, ".venv/bin/ruff");
+        const cli = path.join(
+          root,
+          ".venv",
+          ...(process.platform === "win32" ? ["Scripts", "ruff.exe"] : ["bin", "ruff"]),
+        );
         if (!existsSync(cli))
           throw new Error("缺少项目 Ruff；请先运行 uv sync --locked --all-packages");
         run(cli, ["format", "--force-exclude", "--", ...python], "Ruff format");

@@ -20,7 +20,7 @@ cd compass
 
 ## 本地启动
 
-需要 Node.js 24（验收版本见 `.node-version`）、pnpm 11.3.0、uv 0.13.0，以及运行中的 Docker Desktop。uv 根据 `.python-version` 获取 Python。Windows 使用 WSL2。
+需要 Node.js 24（验收版本见 `.node-version`）、pnpm 11.3.0、uv 0.13.0，以及运行中的 Docker Desktop。uv 根据 `.python-version` 获取 Python。Windows 原生支持开发链路（install / setup / check / dev / test）；`pnpm run deploy` 容器部署仍需 WSL2。
 
 从本目录执行：
 

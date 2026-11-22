@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,7 +33,7 @@ globalThis.fetch = async (url) => {
   delete env.COMPASS_SMOKE_TEST_SECRET;
   return spawnSync(
     process.execPath,
-    ["--import", path.join(dir, "fetch.mjs"), "smoke.mjs", ...args],
+    ["--import", pathToFileURL(path.join(dir, "fetch.mjs")).href, "smoke.mjs", ...args],
     {
       cwd: dir,
       encoding: "utf8",

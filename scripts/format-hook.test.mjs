@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -25,6 +26,26 @@ const formattedTs = 'const value = { name: "compass", items: [1, 2] };\n';
 const python = "value={'name':'compass','items':[1,2]}\n";
 const formattedPython = 'value = {"name": "compass", "items": [1, 2]}\n';
 
+// The hook entry command is POSIX sh. On Windows, resolve an sh.exe (Git for Windows):
+// PATH first, then the common install locations; fail loudly when none is available.
+function shellCommand() {
+  if (process.platform !== "win32") return "/bin/sh";
+  const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+  const candidates = [
+    "sh",
+    path.join(programFiles, "Git", "bin", "sh.exe"),
+    path.join(programFiles, "Git", "usr", "bin", "sh.exe"),
+  ];
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ["-c", ":"], { encoding: "utf8", timeout: 5000 });
+    if (probe.status === 0) return candidate;
+  }
+  throw new Error(
+    "Windows 运行 Hook 测试需要 POSIX sh（Git for Windows）。请安装 Git for Windows 或将其 bin 目录加入 PATH。",
+  );
+}
+const shell = shellCommand();
+
 function fixture(t, { prettier = true, ruff = true } = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "compass format hook-")));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -43,17 +64,38 @@ function fixture(t, { prettier = true, ruff = true } = {}) {
   ]) {
     write(file, readFileSync(path.join(root, file)));
   }
-  if (prettier) symlinkSync(path.join(root, "node_modules"), path.join(dir, "node_modules"));
+  if (prettier)
+    symlinkSync(
+      path.join(root, "node_modules"),
+      path.join(dir, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
   if (ruff) {
-    mkdirSync(path.join(dir, ".venv/bin"), { recursive: true });
-    symlinkSync(path.join(root, ".venv/bin/ruff"), path.join(dir, ".venv/bin/ruff"));
+    if (process.platform === "win32") {
+      mkdirSync(path.join(dir, ".venv/Scripts"), { recursive: true });
+      try {
+        symlinkSync(
+          path.join(root, ".venv/Scripts/ruff.exe"),
+          path.join(dir, ".venv/Scripts/ruff.exe"),
+        );
+      } catch {
+        // Without symlink privileges fall back to copying; the test only needs the tool present.
+        copyFileSync(
+          path.join(root, ".venv/Scripts/ruff.exe"),
+          path.join(dir, ".venv/Scripts/ruff.exe"),
+        );
+      }
+    } else {
+      mkdirSync(path.join(dir, ".venv/bin"), { recursive: true });
+      symlinkSync(path.join(root, ".venv/bin/ruff"), path.join(dir, ".venv/bin/ruff"));
+    }
   }
   return {
     dir,
     write,
     read: (file) => readFileSync(path.join(dir, file), "utf8"),
     run(event, cwd = dir) {
-      return spawnSync("/bin/sh", ["-c", command], {
+      return spawnSync(shell, ["-c", command], {
         cwd,
         input: JSON.stringify({ hook_event_name: "PostToolUse", cwd, ...event }),
         encoding: "utf8",
@@ -181,8 +223,16 @@ test("directories, missing files, symlinks and paths outside Compass never reach
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   const externalFile = path.join(outside, "main.ts");
   writeFileSync(externalFile, ts);
-  symlinkSync(externalFile, path.join(f.dir, "linked.ts"));
-  symlinkSync(outside, path.join(f.dir, "linked-dir"));
+  try {
+    symlinkSync(externalFile, path.join(f.dir, "linked.ts"));
+  } catch {
+    // Without symlink privileges the name simply stays missing; formatting skips it either way.
+  }
+  symlinkSync(
+    outside,
+    path.join(f.dir, "linked-dir"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   for (const file of [
     externalFile,
     path.relative(f.dir, externalFile),
